@@ -447,7 +447,8 @@ def RunNormalMode(all_movies):
             # 依次执行各个步骤
             inner_bar.set_description(f'启动并发任务')
             all_info = parallel_crawler(movie, inner_bar)
-            msg = f'为其配置的{len(Cfg().crawler.selection[movie.data_src])}个抓取器均未获取到影片信息'
+            avid = movie.dvdid or movie.cid or '未知番号'
+            msg = f'[{avid}] 为其配置的{len(Cfg().crawler.selection[movie.data_src])}个抓取器均未获取到影片信息'
             check_step(all_info, msg)
 
             inner_bar.set_description('汇总数据')
@@ -523,9 +524,9 @@ def RunNormalMode(all_movies):
             if movie != all_movies[-1] and Cfg().crawler.sleep_after_scraping > Duration(0):
                 time.sleep(Cfg().crawler.sleep_after_scraping.total_seconds())
             return_movies.append(movie)
-        # except Exception as e:
-        #     logger.debug(e, exc_info=True)
-        #     logger.error(f'整理失败: {e}')
+        except Exception as e:
+            avid = movie.dvdid or movie.cid or '未知番号'
+            logger.error(f'[{avid}] 整理失败: {e}')
         finally:
             inner_bar.close()
     return return_movies

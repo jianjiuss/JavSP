@@ -115,6 +115,7 @@ class Crawler(BaseConfig):
     sleep_after_scraping: Duration
     use_javdb_cover: UseJavDBCover
     normalize_actress_name: bool
+    javdb_cookie: str | None = None
 
 class MovieDefault(BaseConfig):
     title: str

@@ -31,7 +31,9 @@ def get_html_wrapper(url):
     r = request.get(url, delay_raise=True)
     if r.status_code == 200:
         # 发生重定向可能仅仅是域名重定向，因此还要检查url以判断是否被跳转到了登录页
-        if r.history and '/login' in r.url:
+        # curl_cffi 跟随重定向时 r.history 始终为空，改为直接判断最终 URL
+        redirected = r.url != url
+        if '/login' in r.url:
             # 仅在需要时去读取Cookies
             if 'cookies_pool' not in globals():
                 try:
@@ -42,18 +44,31 @@ def get_html_wrapper(url):
                 except Exception as e:
                     logger.warning(f"获取JavDB的登录凭据时出错({e})，你可能使用的是国内定制版等非官方Chrome系浏览器", exc_info=True)
                     cookies_pool = []
+                # 浏览器 Cookies 不可用时，回退到配置文件中手动填写的 Cookie
+                if not cookies_pool:
+                    javdb_cookie_str = Cfg().crawler.javdb_cookie
+                    if javdb_cookie_str:
+                        parsed = {k.strip(): v.strip() for k, v in
+                                  (pair.split('=', 1) for pair in javdb_cookie_str.split(';') if '=' in pair)}
+                        if parsed.get('locale') != 'zh':
+                            logger.warning('config 中 javdb_cookie 的 locale 不是 zh，JavDB 可能返回英文页面导致解析失败')
+                        cookies_pool = [{'cookies': parsed, 'profile': 'config', 'site': 'javdb.com'}]
+                        logger.debug('使用 config 中手动配置的 javdb_cookie')
             if len(cookies_pool) > 0:
                 item = cookies_pool.pop()
-                # 更换Cookies时需要创建新的request实例，否则cloudscraper会保留它内部第一次发起网络访问时获得的Cookies
+                # 更换Cookies时需要创建新的request实例，curl_cffi需要手动将Cookies同步到Session才能生效
                 request = Request(use_scraper=True)
+                request.headers['Accept-Language'] = 'zh-CN,zh;q=0.9,zh-TW;q=0.8,en-US;q=0.7,en;q=0.6,ja;q=0.5'
                 request.cookies = item['cookies']
+                if request.scraper:
+                    request.scraper.cookies.update(request.cookies)
                 cookies_source = (item['profile'], item['site'])
                 logger.debug(f'未携带有效Cookies而发生重定向，尝试更换Cookies为: {cookies_source}')
                 return get_html_wrapper(url)
             else:
                 raise CredentialError('JavDB: 所有浏览器Cookies均已过期')
-        elif r.history and 'pay' in r.url.split('/')[-1]:
-            raise SitePermissionError(f"JavDB: 此资源被限制为仅VIP可见: '{r.history[0].url}'")
+        elif redirected and 'pay' in r.url.split('/')[-1]:
+            raise SitePermissionError(f"JavDB: 此资源被限制为仅VIP可见: '{url}'")
         else:
             html = resp2html(r)
             return html

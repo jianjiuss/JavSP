@@ -6,7 +6,7 @@ import shutil
 import logging
 import requests
 import contextlib
-import cloudscraper
+from curl_cffi.requests import Session as CurlSession
 import lxml.html
 from tqdm import tqdm
 from lxml import etree
@@ -52,23 +52,10 @@ class Request():
             self.__post = requests.post
             self.__head = requests.head
         else:
-            self.scraper = cloudscraper.create_scraper()
-            self.__get = self._scraper_monitor(self.scraper.get)
-            self.__post = self._scraper_monitor(self.scraper.post)
-            self.__head = self._scraper_monitor(self.scraper.head)
-
-    def _scraper_monitor(self, func):
-        """监控cloudscraper的工作状态，遇到不支持的Challenge时尝试退回常规的requests请求"""
-        def wrapper(*args, **kw):
-            try:
-                return func(*args, **kw)
-            except Exception as e:
-                logger.debug(f"无法通过CloudFlare检测: '{e}', 尝试退回常规的requests请求")
-                if func == self.scraper.get:
-                    return requests.get(*args, **kw)
-                else:
-                    return requests.post(*args, **kw)
-        return wrapper
+            self.scraper = CurlSession(impersonate="chrome110")
+            self.__get = self.scraper.get
+            self.__post = self.scraper.post
+            self.__head = self.scraper.head
 
     def get(self, url, delay_raise=False):
         r = self.__get(url,
@@ -138,11 +125,12 @@ def request_post(url, data, cookies={}, timeout=None, delay_raise=False):
     return r
 
 
-def get_resp_text(resp: Response, encoding=None):
+def get_resp_text(resp, encoding=None):
     """提取Response的文本"""
     if encoding:
-        resp.encoding = encoding
-    else:
+        return resp.content.decode(encoding, errors='replace')
+    # curl_cffi Response 没有 apparent_encoding，回退到 chardet 检测或直接用 .text
+    if hasattr(resp, 'apparent_encoding') and resp.apparent_encoding:
         resp.encoding = resp.apparent_encoding
     return resp.text
 

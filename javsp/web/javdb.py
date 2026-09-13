@@ -117,6 +117,33 @@ def get_valid_cookies():
             logger.debug(f"{d['profile']}, {d['site']}: Cookies无效")
 
 
+def _extract_actress(info):
+    """从影片信息面板中提取女演员，兼容 JavDB 新旧页面标记。"""
+    actors_tags = info.xpath(
+        ".//strong[normalize-space()='演員:']/following-sibling::span[1]"
+    )
+    if not actors_tags:
+        return []
+
+    actress = []
+    for actor in actors_tags[0].xpath(".//a"):
+        name = ''.join(actor.itertext()).strip()
+        if not name:
+            continue
+
+        # 新版页面使用 actor-female class；旧版页面在演员链接前放置性别 strong。
+        classes = (actor.get('class') or '').split()
+        is_female = 'actor-female' in classes
+        if not is_female:
+            gender_tag = actor.xpath("./preceding-sibling::*[1][self::strong]")
+            is_female = bool(
+                gender_tag and gender_tag[0].text_content().strip() == '♀'
+            )
+        if is_female:
+            actress.append(name)
+    return actress
+
+
 def parse_data(movie: MovieInfo):
     """从网页抓取并解析指定番号的数据
     Args:
@@ -196,10 +223,7 @@ def parse_data(movie: MovieInfo):
         subsite = pre_id.split('?')[0]
         movie.uncensored = {'uncensored': True, 'tags':False}.get(subsite)
     # JavDB目前同时提供男女优信息，根据用来标识性别的符号筛选出女优
-    actors_tag = info.xpath("//strong[text()='演員:']/../span")[0]
-    all_actors = actors_tag.xpath("a/text()")
-    genders = actors_tag.xpath("strong/text()")
-    actress = [i for i in all_actors if genders[all_actors.index(i)] == '♀']
+    actress = _extract_actress(info)
     magnet = container.xpath("//div[@class='magnet-name column is-four-fifths']/a/@href")
 
     movie.dvdid = dvdid

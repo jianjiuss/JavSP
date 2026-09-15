@@ -22,15 +22,11 @@ from tqdm import tqdm
 pretty_errors.configure(display_link=True)
 
 
-from javsp.print import TqdmOut
 from javsp.cropper import Cropper, get_cropper
 
 
-# 将StreamHandler的stream修改为TqdmOut，以与Tqdm协同工作
-root_logger = logging.getLogger()
-for handler in root_logger.handlers:
-    if type(handler) == logging.StreamHandler:
-        handler.stream = TqdmOut
+# 导入javsp.print会将内置print重定向到tqdm，避免普通输出与进度条互相覆盖
+import javsp.print  # noqa: F401
 
 logger = logging.getLogger('main')
 
@@ -46,6 +42,7 @@ from javsp.web.exceptions import *
 from javsp.web.translate import translate_movie_info
 
 from javsp.config import Cfg, CrawlerID
+from javsp.log import setup_logging
 from javsp.prompt import prompt, is_waiting_for_input
 
 actressAliasMap = {}
@@ -608,6 +605,8 @@ def entry():
             actressAliasMap = json.load(file)
 
     colorama.init(autoreset=True)
+    # 配置日志：控制台输出INFO及以上，JavSP.log记录DEBUG及以上的完整日志
+    setup_logging()
 
     # 检查更新
     version_info = 'JavSP ' + getattr(sys, 'javsp_version', '未知版本/从代码运行')

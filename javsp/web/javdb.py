@@ -209,9 +209,7 @@ def _choose_search_result(dvdid, candidates, input_func=None):
         except EOFError:
             value = ''
         if not value:
-            # 提示信息使用print输出，确保不受日志级别限制而始终可见
-            print('未选择搜索结果，已跳过本次整理')
-            raise MovieSkipped('未选择搜索结果，已跳过')
+            raise MovieSkipped('未选择搜索结果')
         try:
             selected = int(value)
         except ValueError:

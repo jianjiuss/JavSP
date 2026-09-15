@@ -112,7 +112,7 @@ def test_search_result_label_renders_title_meta_and_score():
     assert _search_result_label(box) == '标题一（2024-10-01 ｜ 4.70分, 由100人評價）'
 
 
-def test_choose_search_result_skips_on_empty_input(capsys):
+def test_choose_search_result_skips_on_empty_input():
     search = html.fromstring(
         '<div>'
         '<a class="box" href="https://javdb580.com/v/one" title="第一条"></a>'
@@ -120,12 +120,12 @@ def test_choose_search_result_skips_on_empty_input(capsys):
         '</div>'
     )
 
-    with pytest.raises(MovieSkipped):
+    with pytest.raises(MovieSkipped) as exc_info:
         _choose_search_result(
             'ABF-017', list(search.xpath('//a[@class="box"]')), lambda _prompt: ''
         )
 
-    assert '已跳过本次整理' in capsys.readouterr().out
+    assert '未选择搜索结果' in str(exc_info.value)
 
 
 def test_choose_search_result_marks_waiting_state_only_while_prompting():

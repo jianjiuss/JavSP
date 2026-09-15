@@ -11,7 +11,9 @@ import requests
 import threading
 from typing import Dict, List
 
-sys.stdout.reconfigure(encoding='utf-8')
+# 部分环境（如被重定向或测试时）的stdout不支持reconfigure
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 
 import colorama
 import pretty_errors
@@ -41,7 +43,7 @@ from javsp.web.base import download
 from javsp.web.exceptions import *
 from javsp.web.translate import translate_movie_info
 
-from javsp.config import Cfg, CrawlerID
+from javsp.config import Cfg, CrawlerID, UseJavDBCover
 from javsp.log import setup_logging
 from javsp.prompt import prompt, is_waiting_for_input
 
@@ -154,8 +156,8 @@ def parallel_crawler(movie: Movie, tqdm_bar=None):
     all_info = {k:v for k,v in all_info.items() if hasattr(v, 'success')}
     for info in all_info.values():
         del info.success
-    # 删除all_info中键名中的'web.'
-    all_info = {k[4:]:v for k,v in all_info.items()}
+    # 兼容历史版本中带'web.'前缀的键名，保证info_summary能按站点名取到数据
+    all_info = {k.removeprefix('web.'):v for k,v in all_info.items()}
     if not all_info and skipped is not None:
         raise skipped
     return all_info
@@ -221,9 +223,14 @@ def info_summary(movie: Movie, all_info: Dict[str, MovieInfo]):
                 final_info.cid = final_id
     # javdb封面有水印，优先采用其他站点的封面
     javdb_cover = getattr(all_info.get('javdb'), 'cover', None)
-    if javdb_cover is not None:
+    if javdb_cover is not None and javdb_cover in covers:
         match Cfg().crawler.use_javdb_cover:
+            case UseJavDBCover.yes:
+                # 将JavDB的封面移到最前面，优先使用
+                covers.remove(javdb_cover)
+                covers.insert(0, javdb_cover)
             case UseJavDBCover.fallback:
+                # 将JavDB的封面移到最后，其他站点都没有封面时才使用
                 covers.remove(javdb_cover)
                 covers.append(javdb_cover)
             case UseJavDBCover.no:

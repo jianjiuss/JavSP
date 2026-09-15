@@ -1,6 +1,6 @@
 """网页抓取相关的异常"""
-__all__ = ['CrawlerError', 'MovieNotFoundError', 'MovieDuplicateError', 'SiteBlocked',
-           'SitePermissionError', 'CredentialError', 'WebsiteError', 'OtherError']
+__all__ = ['CrawlerError', 'MovieNotFoundError', 'MovieDuplicateError', 'MovieSkipped',
+           'SiteBlocked', 'SitePermissionError', 'CredentialError', 'WebsiteError', 'OtherError']
 
 
 class CrawlerError(Exception):
@@ -23,6 +23,15 @@ class MovieDuplicateError(CrawlerError):
     def __init__(self, mod, avid, dup_count, *args) -> None:
         msg = f"{mod}: '{avid}': 存在{dup_count}个完全匹配目标番号的搜索结果"
         super().__init__(msg, *args)
+
+    def __str__(self):
+        return self.args[0]
+
+
+class MovieSkipped(CrawlerError):
+    """用户主动跳过当前影片（例如放弃选择重复的搜索结果）"""
+    def __init__(self, reason: str = '用户取消了本次整理') -> None:
+        super().__init__(reason)
 
     def __str__(self):
         return self.args[0]

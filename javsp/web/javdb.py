@@ -10,6 +10,7 @@ from javsp.avid import guess_av_type
 from javsp.config import Cfg, CrawlerID
 from javsp.datatype import MovieInfo, GenreMap
 from javsp.chromium import get_browsers_cookies
+from javsp.prompt import waiting_for_input
 
 
 # 初始化Request实例。使用scraper绕过CloudFlare后，需要指定网页语言，否则可能会返回其他语言网页，影响解析
@@ -144,6 +145,99 @@ def _extract_actress(info):
     return actress
 
 
+def _search_result_candidates(html, dvdid):
+    """提取搜索页中与番号完全匹配的结果，并去除重复链接。"""
+    target = dvdid.lower()
+    candidates = []
+    seen_urls = set()
+    boxes = html.xpath(
+        "//a[contains(concat(' ', normalize-space(@class), ' '), ' box ')]"
+    )
+    for box in boxes:
+        id_text = ''.join(box.xpath(
+            ".//div[contains(concat(' ', normalize-space(@class), ' '), ' video-title ')]"
+            "/strong//text()"
+        )).strip()
+        url = box.get('href')
+        key = url.split('?')[0].split('#')[0] if url else url
+        if id_text.lower() == target and url and key not in seen_urls:
+            candidates.append(box)
+            seen_urls.add(key)
+    return candidates
+
+
+def _element_text(node):
+    """将节点内的文本片段合并为单行文本。"""
+    return ' '.join(' '.join(node.itertext()).split())
+
+
+def _search_result_label(box):
+    """生成搜索结果的可读描述，兼容 JavDB 搜索页字段变化。"""
+    title = (box.get('title') or '').strip()
+    if not title:
+        title = ' '.join(''.join(box.xpath(
+            ".//div[contains(concat(' ', normalize-space(@class), ' '), ' video-title ')]//text()"
+        )).split())
+    meta = ' '.join(_element_text(node) for node in box.xpath(
+        ".//div[contains(concat(' ', normalize-space(@class), ' '), ' meta ')]"
+    ))
+    score = ' '.join(_element_text(node) for node in box.xpath(
+        ".//div[contains(concat(' ', normalize-space(@class), ' '), ' score ')]"
+    ))
+    details = ' ｜ '.join(i for i in (meta, score) if i)
+    if details:
+        return f'{title}（{details}）'
+    return title or box.get('href', '')
+
+
+def _choose_search_result(dvdid, candidates, input_func=None):
+    """交互式选择一个重复番号的搜索结果，返回其下标。"""
+    if input_func is None:
+        input_func = input
+
+    print(f"JavDB 找到 {len(candidates)} 个番号为 '{dvdid}' 的结果，请选择正确的影片：")
+    for index, box in enumerate(candidates, start=1):
+        print(f'  [{index}] {_search_result_label(box)}')
+        print(f"      地址: {box.get('href', '')}")
+
+    while True:
+        try:
+            with waiting_for_input():
+                value = input_func(
+                    f'请输入结果编号（1-{len(candidates)}），直接回车跳过本次整理：'
+                ).strip()
+        except EOFError:
+            value = ''
+        if not value:
+            # 提示信息使用print输出，确保不受日志级别限制而始终可见
+            print('未选择搜索结果，已跳过本次整理')
+            raise MovieSkipped('未选择搜索结果，已跳过')
+        try:
+            selected = int(value)
+        except ValueError:
+            selected = 0
+        if 1 <= selected <= len(candidates):
+            return selected - 1
+        print(f'输入无效，请输入 1-{len(candidates)} 的数字。')
+
+
+def _fill_from_search_result(movie: MovieInfo, box, url):
+    """无法访问影片详情页时，退而使用搜索结果中能提取到的信息"""
+    movie.url = url
+    movie.title = box.get('title')
+    cover_tag = box.xpath("div/img/@src")
+    if cover_tag:
+        movie.cover = cover_tag[0]
+    score_tag = box.xpath("div[@class='score']/span/span")
+    if score_tag and score_tag[0].tail:
+        match = re.search(r'([\d.]+)分', score_tag[0].tail)
+        if match:
+            movie.score = "{:.2f}".format(float(match.group(1)) * 2)
+    meta_tag = box.xpath("div[@class='meta']/text()")
+    if meta_tag:
+        movie.publish_date = meta_tag[0].strip()
+
+
 def parse_data(movie: MovieInfo):
     """从网页抓取并解析指定番号的数据
     Args:
@@ -151,29 +245,34 @@ def parse_data(movie: MovieInfo):
     """
     # JavDB搜索番号时会有多个搜索结果，从中查找匹配番号的那个
     html = get_html_wrapper(f'{base_url}/search?q={movie.dvdid}')
-    ids = list(map(str.lower, html.xpath("//div[@class='video-title']/strong/text()")))
-    movie_urls = html.xpath("//a[@class='box']/@href")
-    match_count = len([i for i in ids if i == movie.dvdid.lower()])
+    candidates = _search_result_candidates(html, movie.dvdid)
+    match_count = len(candidates)
     if match_count == 0:
+        ids = list(map(str.lower, html.xpath("//div[@class='video-title']/strong/text()")))
         raise MovieNotFoundError(__name__, movie.dvdid, ids)
     elif match_count == 1:
-        index = ids.index(movie.dvdid.lower())
-        new_url = movie_urls[index]
+        box = candidates[0]
+        new_url = box.get('href')
         try:
             html2 = get_html_wrapper(new_url)
         except (SitePermissionError, CredentialError):
             # 不开VIP不让看，过分。决定榨出能获得的信息，毕竟有时候只有这里能找到标题和封面
-            box = html.xpath("//a[@class='box']")[index]
-            movie.url = new_url
-            movie.title = box.get('title')
-            movie.cover = box.xpath("div/img/@src")[0]
-            score_str = box.xpath("div[@class='score']/span/span")[0].tail
-            score = re.search(r'([\d.]+)分', score_str).group(1)
-            movie.score = "{:.2f}".format(float(score)*2)
-            movie.publish_date = box.xpath("div[@class='meta']/text()")[0].strip()
+            _fill_from_search_result(movie, box, new_url)
             return
     else:
-        raise MovieDuplicateError(__name__, movie.dvdid, match_count)
+        if not Cfg().other.interactive:
+            raise MovieDuplicateError(
+                __name__, movie.dvdid, match_count,
+                [box.get('href') for box in candidates]
+            )
+        index = _choose_search_result(movie.dvdid, candidates)
+        box = candidates[index]
+        new_url = box.get('href')
+        try:
+            html2 = get_html_wrapper(new_url)
+        except (SitePermissionError, CredentialError):
+            _fill_from_search_result(movie, box, new_url)
+            return
 
     container = html2.xpath("/html/body/section/div/div[@class='video-detail']")[0]
     info = container.xpath("//nav[@class='panel movie-panel-info']")[0]

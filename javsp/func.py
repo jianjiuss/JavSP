@@ -29,7 +29,7 @@ from javsp.lib import re_escape, resource_path
 from javsp.prompt import prompt
 
 __all__ = ['select_folder', 'get_scan_dir', 'remove_trail_actor_in_title',
-           'shutdown', 'CLEAR_LINE', 'check_update', 'split_by_punc']
+           'shutdown', 'CLEAR_LINE', 'check_update', 'split_by_punc', 'join_threads']
 
 
 CLEAR_LINE = '\r\x1b[K'
@@ -271,6 +271,27 @@ def download_update(rel_info):
             p.wait()
             p.terminate()
             sys.exit(0)
+
+
+def join_threads(thread_pool, timeout, waiting_check=None, poll_interval=0.5):
+    """等待线程结束，等待用户输入的时间不计入超时
+
+    Args:
+        thread_pool: 要等待的线程列表
+        timeout (float): 每个线程允许等待的最长时间（秒）
+        waiting_check: 无参数函数，返回True时表示用户正在交互，此时会重置超时
+        poll_interval (float): 检查等待状态的间隔，避免长时间无法响应
+    """
+    for th in thread_pool:
+        deadline = time.monotonic() + timeout
+        while th.is_alive():
+            if waiting_check is not None and waiting_check():
+                # 用户正在选择搜索结果等情况，重新计时以留出充足的输入时间
+                deadline = time.monotonic() + timeout
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            th.join(timeout=min(remaining, poll_interval))
 
 
 if __name__ == "__main__":

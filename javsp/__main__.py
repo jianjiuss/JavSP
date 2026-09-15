@@ -46,7 +46,7 @@ from javsp.web.exceptions import *
 from javsp.web.translate import translate_movie_info
 
 from javsp.config import Cfg, CrawlerID
-from javsp.prompt import prompt
+from javsp.prompt import prompt, is_waiting_for_input
 
 actressAliasMap = {}
 
@@ -100,6 +100,10 @@ def parallel_crawler(movie: Movie, tqdm_bar=None):
             except MovieDuplicateError as e:
                 logger.exception(e)
                 break
+            except MovieSkipped as e:
+                logger.debug(e)
+                setattr(info, 'skipped', e)
+                break
             except (SiteBlocked, SitePermissionError, CredentialError) as e:
                 logger.error(e)
                 break
@@ -133,11 +137,11 @@ def parallel_crawler(movie: Movie, tqdm_bar=None):
             th = threading.Thread(target=wrapper, name=mod, args=(parser, info, Cfg().network.retry))
         th.start()
         thread_pool.append(th)
-    # 等待所有线程结束
+    # 等待所有线程结束。等待用户进行交互选择的时间不计入抓取超时
     timeout = Cfg().network.retry * Cfg().network.timeout.total_seconds()
-    for th in thread_pool:
-        th: threading.Thread
-        th.join(timeout=timeout)
+    join_threads(thread_pool, timeout, waiting_check=is_waiting_for_input)
+    # 用户在交互中放弃选择时记录原因，便于没有其他抓取结果时跳过该影片
+    skipped = next((i.skipped for i in all_info.values() if getattr(i, 'skipped', None)), None)
     # 根据抓取结果更新影片类型判定
     if movie.data_src == 'cid' and movie.dvdid:
         titles = [all_info[i].title for i in Cfg().crawler.selection[movie.data_src]]
@@ -155,6 +159,8 @@ def parallel_crawler(movie: Movie, tqdm_bar=None):
         del info.success
     # 删除all_info中键名中的'web.'
     all_info = {k[4:]:v for k,v in all_info.items()}
+    if not all_info and skipped is not None:
+        raise skipped
     return all_info
 
 
@@ -524,6 +530,9 @@ def RunNormalMode(all_movies):
             if movie != all_movies[-1] and Cfg().crawler.sleep_after_scraping > Duration(0):
                 time.sleep(Cfg().crawler.sleep_after_scraping.total_seconds())
             return_movies.append(movie)
+        except MovieSkipped as e:
+            avid = movie.dvdid or movie.cid or '未知番号'
+            logger.info(f'[{avid}] 已跳过：{e}')
         except Exception as e:
             avid = movie.dvdid or movie.cid or '未知番号'
             logger.error(f'[{avid}] 整理失败: {e}')

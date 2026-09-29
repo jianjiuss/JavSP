@@ -9,7 +9,7 @@ from javsp.func import *
 from javsp.avid import guess_av_type
 from javsp.config import Cfg, CrawlerID
 from javsp.datatype import MovieInfo, GenreMap
-from javsp.chromium import get_browsers_cookies
+from javsp.chromium import get_browsers_cookies, AppBoundEncryptionError
 from javsp.prompt import waiting_for_input
 
 
@@ -23,7 +23,9 @@ permanent_url = 'https://javdb.com'
 if Cfg().network.proxy_server is not None:
     base_url = permanent_url
 else:
-    base_url = str(Cfg().network.proxy_free[CrawlerID.javdb])
+    # 配置中的地址解析为 Url 类型后会带上末尾的 '/'，此处统一去掉，避免拼出
+    # 'https://host//search' 以及在替换域名时把 '/v/...' 前的斜杠一并吃掉
+    base_url = str(Cfg().network.proxy_free[CrawlerID.javdb]).rstrip('/')
 
 
 def get_html_wrapper(url):
@@ -39,6 +41,9 @@ def get_html_wrapper(url):
             if 'cookies_pool' not in globals():
                 try:
                     cookies_pool = get_browsers_cookies()
+                except AppBoundEncryptionError as e:
+                    logger.warning(str(e))
+                    cookies_pool = []
                 except (PermissionError, OSError) as e:
                     logger.warning(f"无法从浏览器Cookies文件获取JavDB的登录凭据({e})，可能是安全软件在保护浏览器Cookies文件", exc_info=True)
                     cookies_pool = []

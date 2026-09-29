@@ -9,13 +9,16 @@ from glob import glob
 from shutil import copyfile
 from datetime import datetime
 
-__all__ = ['get_browsers_cookies']
-
+__all__ = ['get_browsers_cookies', 'AppBoundEncryptionError']
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from Crypto.Cipher import AES
 
 logger = logging.getLogger(__name__)
+
+
+class AppBoundEncryptionError(Exception):
+    """Cookie 使用了 Chrome 的 App-Bound 加密（v20），无法在外部进程解密"""
 
 
 class Decrypter():
@@ -120,7 +123,17 @@ def get_cookies(cookies_file, decrypter, host_pattern='javdb%.com'):
     # 将查询结果按照host_key进行组织
     now = datetime.now()
     records = {}
-    for host_key, name, encrypted_value, expires_utc in cursor.fetchall():
+    rows = cursor.fetchall()
+    # Chrome 127+ 默认启用 App-Bound 加密（Cookie 值以 b'v20' 开头），其密钥由
+    # Chrome 的提权服务保护，外部进程无法解密，因此这里直接给出明确提示
+    if any(ev[:3] == b'v20' for _, _, ev, _ in rows):
+        conn.close()
+        os.remove(temp_cookie)
+        raise AppBoundEncryptionError(
+            '浏览器 Cookies 使用了 App-Bound 加密（Chrome 127+ 的默认行为），无法从磁盘解密；'
+            '请在 config.yml 的 crawler.javdb_cookie 中手动填写 Cookie'
+        )
+    for host_key, name, encrypted_value, expires_utc in rows:
         d = records.setdefault(host_key, {})
         # 只提取尚在有效期内的Cookies
         expires = convert_chrome_utc(expires_utc)
